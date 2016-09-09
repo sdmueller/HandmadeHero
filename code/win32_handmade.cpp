@@ -1,8 +1,24 @@
-#include <windows.h>
+/*
+    TODO THIS IS NOT A FINAL PLATFORM LAYER!!!
+
+    - Saved game locations
+    - Getting a handle to our own executable file
+    - Asset loading path
+    - Threading (launch a thread)
+    - Raw input (support for multiple keyboards)
+    - Sleep/timeBeginPeriod
+    - ClipCursor() (for multimonitor support)
+    - Fullscreen support
+    - WM_SETCURSOR (control cursor visibility)
+    - QueryCancelAutoplay
+    - WM_ACTIVATEAPP (for when we are not the active application)
+    - Blit speed improvoements (BitBlt)
+    - Hardware acceleration (OpenGL or Direct3D or BOTH??)
+    - GetKeyboardLayout (for French keyboards, international WASD support)
+
+    Just a partial list of stuff
+*/
 #include <stdint.h>
-#include <xinput.h>
-#include <dsound.h>
-#include <math.h>
 
 #define internal static
 #define local_persist static
@@ -24,26 +40,33 @@ typedef uint64_t uint64;
 typedef float real32;
 typedef double real64;
 
+#include "handmade.cpp"
+
+#include <windows.h>
+#include <xinput.h>
+#include <dsound.h>
+#include <math.h>
+
 struct win32_offscreen_buffer
 {
+    // NOTE Pixels are always 32-bits wide, Memory Order BB GG RR XX
     BITMAPINFO Info;
     void *Memory;
     int Width;
     int Height;
     int Pitch;
-    int BytesPerPixel;
 };
-
-// TODO This is a global for now
-global_variable bool GlobalRunning; //automatically initialised to 0
-global_variable win32_offscreen_buffer GlobalBackbuffer;
-global_variable LPDIRECTSOUNDBUFFER GlobalSecondaryBuffer;
 
 struct win32_window_dimension
 {
     int Width;
     int Height;
 };
+
+//TODO This is a global for now
+global_variable bool GlobalRunning; //automatically initialised to 0
+global_variable win32_offscreen_buffer GlobalBackbuffer;
+global_variable LPDIRECTSOUNDBUFFER GlobalSecondaryBuffer;
 
 // NOTE XInputGetState
 #define X_INPUT_GET_STATE(name) DWORD WINAPI name(DWORD dwUserIndex, XINPUT_STATE *pState)
@@ -194,33 +217,6 @@ Win32GetWindowDimension(HWND Window)
 }
 
 internal void
-RenderWeirdGradient(win32_offscreen_buffer *Buffer, int BlueOffset, int GreenOffset)
-{
-    uint8 *Row = (uint8 *)Buffer->Memory;
-    for(int Y = 0; Y < Buffer->Height; ++Y)
-    {
-        uint32 *Pixel = (uint32 *)Row;
-        for(int X = 0; X < Buffer->Width; ++X)
-        {
-            /* Paint the screen
-             Pixel in memory: BB GG RR xx
-             LITTLE ENDIAN ARCHITECTURE!
-             Value in register:
-             0x xxRRGGBB
-            */
-            uint8 Blue = (X + BlueOffset);
-            uint8 Green = (Y + GreenOffset);
-
-            *Pixel++ = ((Green << 8) | Blue);
-        }
-
-        Row += Buffer->Pitch;
-    }
-}
-
-
-
-internal void
 Win32ResizeDIBSection(win32_offscreen_buffer *Buffer, int Width, int Height)
 {
     // TODO Bulletproof this
@@ -232,7 +228,7 @@ Win32ResizeDIBSection(win32_offscreen_buffer *Buffer, int Width, int Height)
 
     Buffer->Width = Width;
     Buffer->Height = Height;
-    Buffer->BytesPerPixel = 4;
+    int BytesPerPixel = 4;
 
     // NOTE When the biHeight field is negative, this is the clue to Windows to
     // treat this bitmap as top-down, not bottom-up, meaning that the first three
@@ -245,12 +241,11 @@ Win32ResizeDIBSection(win32_offscreen_buffer *Buffer, int Width, int Height)
     Buffer->Info.bmiHeader.biBitCount = 32;
     Buffer->Info.bmiHeader.biCompression = BI_RGB;
 
-    int BitmapMemorySize = (Buffer->Width * Buffer->Height) * Buffer->BytesPerPixel;
+    int BitmapMemorySize = (Buffer->Width * Buffer->Height) * BytesPerPixel;
     Buffer->Memory = VirtualAlloc(0, BitmapMemorySize, MEM_COMMIT, PAGE_READWRITE);
 
     // TODO Probably clear this to black
-    Buffer->Pitch = Width * Buffer->BytesPerPixel;
-
+    Buffer->Pitch = Width * BytesPerPixel;
 }
 
 internal void
@@ -562,7 +557,12 @@ WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CommandLine, int ShowC
                     }
                 }
 
-                RenderWeirdGradient(&GlobalBackbuffer, XOffset, YOffset);
+                game_offscreen_buffer Buffer = {};
+                Buffer.Memory = GlobalBackbuffer.Memory;
+                Buffer.Width = GlobalBackbuffer.Width;
+                Buffer.Height = GlobalBackbuffer.Height;
+                Buffer.Pitch = GlobalBackbuffer.Pitch;
+                GameUpdateAndRender(&Buffer, XOffset, YOffset);
 
                 // NOTE DirectSound output test
                 DWORD PlayCursor;
@@ -572,7 +572,6 @@ WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CommandLine, int ShowC
                     DWORD ByteToLock = ((SoundOutput.RunningSampleIndex * SoundOutput.BytesPerSample) % SoundOutput.SecondaryBufferSize);
                     DWORD TargetCursor = ((PlayCursor + (SoundOutput.LatencySampleCount * SoundOutput.BytesPerSample)) % SoundOutput.SecondaryBufferSize);
                     DWORD BytesToWrite;
-                    //TODO Change this to using a lower latency offset from the playcursor when we actually start having sound effects
                     if(ByteToLock > TargetCursor)
                     {
                             BytesToWrite = (SoundOutput.SecondaryBufferSize - ByteToLock);
@@ -595,17 +594,16 @@ WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CommandLine, int ShowC
                 LARGE_INTEGER EndCounter;
                 QueryPerformanceCounter(&EndCounter);
 
-                //TODO Display value here
                 uint64 CyclesElapsed = EndCycleCount - LastCycleCount;
                 int64 CounterElapsed = EndCounter.QuadPart - LastCounter.QuadPart;
                 int32 MSPerFrame = ((1000 * CounterElapsed) / PerfCountFrequency);
                 int32 FPS = PerfCountFrequency / CounterElapsed;
                 int32 MCPF = (int32)(CyclesElapsed / (1000 * 1000));
-
+#if 0
                 char Buffer[256];
                 wsprintf(Buffer, "%dms/f, %df/s, %dmc/f\n", MSPerFrame, FPS, MCPF);
                 OutputDebugStringA(Buffer);
-
+#endif
                 LastCounter = EndCounter;
                 LastCycleCount = EndCycleCount;
 
