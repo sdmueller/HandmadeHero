@@ -1,6 +1,6 @@
 {
   "cmd": "{PROJECT_PATH}/build.bat",
-  "args": [],
+  "args": ["x64"],
   "sh": false,
   "cwd": "{PROJECT_PATH}",
   "env": {}
